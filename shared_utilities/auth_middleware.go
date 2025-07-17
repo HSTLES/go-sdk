@@ -16,8 +16,6 @@ type SecurityConfig struct {
 	AuthServiceURL     string
 	IdentityServiceURL string
 	NotifyServiceURL   string
-	AccountServiceURL  string
-	LoginServiceURL    string
 	APIKeys            map[string]string // service_name -> api_key
 }
 
@@ -34,9 +32,6 @@ func LoadSecurityConfig() *SecurityConfig {
 	}
 	if key := os.Getenv("NOTIFY_SERVICE_API_KEY"); key != "" {
 		apiKeys["notify"] = key
-	}
-	if key := os.Getenv("ACCOUNT_SERVICE_API_KEY"); key != "" {
-		apiKeys["account"] = key
 	}
 
 	// Load service URLs from environment variables with defaults
@@ -55,22 +50,10 @@ func LoadSecurityConfig() *SecurityConfig {
 		notifyURL = "https://notify.hstles.com"
 	}
 
-	accountURL := os.Getenv("ACCOUNT_SERVICE_URL")
-	if accountURL == "" {
-		accountURL = "https://account.hstles.com"
-	}
-
-	loginURL := os.Getenv("LOGIN_SERVICE_URL")
-	if loginURL == "" {
-		loginURL = "https://login.hstles.com"
-	}
-
 	return &SecurityConfig{
 		AuthServiceURL:     authURL,
 		IdentityServiceURL: identityURL,
 		NotifyServiceURL:   notifyURL,
-		AccountServiceURL:  accountURL,
-		LoginServiceURL:    loginURL,
 		APIKeys:            apiKeys,
 	}
 }
@@ -98,7 +81,7 @@ func NewSecurityRoutes(parentDomain string, config *SecurityConfig) *SecurityRou
 		Public:    r.PathPrefix("/").Subrouter(),    // No middleware
 		Protected: createProtectedRoutes(r, config), // Session middleware
 		Service:   createServiceRoutes(r, config),   // API key middleware
-		Mixed:     r.PathPrefix("/").Subrouter(),    // Custom per-endpoint
+		Mixed:     createMixedRoutes(r, config),     // Mixed auth middleware
 	}
 }
 
@@ -114,6 +97,13 @@ func createServiceRoutes(parent *mux.Router, config *SecurityConfig) *mux.Router
 	service := parent.PathPrefix("/").Subrouter()
 	service.Use(ServiceAuthMiddleware(config.APIKeys))
 	return service
+}
+
+// createMixedRoutes creates a subrouter with mixed authentication (API key OR session)
+func createMixedRoutes(parent *mux.Router, config *SecurityConfig) *mux.Router {
+	mixed := parent.PathPrefix("/").Subrouter()
+	mixed.Use(MixedAuthMiddleware(config.AuthServiceURL, config.APIKeys))
+	return mixed
 }
 
 // SessionValidationMiddleware validates sessions using the auth service
@@ -259,10 +249,6 @@ func (c *SecurityConfig) GetServiceURL(serviceName string) string {
 		return c.IdentityServiceURL
 	case "notify":
 		return c.NotifyServiceURL
-	case "account":
-		return c.AccountServiceURL
-	case "login":
-		return c.LoginServiceURL
 	default:
 		return ""
 	}
